@@ -4,9 +4,10 @@
 # Consolidated installer for https://github.com/avraniel/config_kdecaelestia
 # This script installs:
 #   - Caelestia KDE theme (from ladybug-me/caelestia-dots-kde)
-#   - Custom configs (fastfetch, fish from this repo)
+#   - Custom configs (fastfetch, fish, kitty from this repo)
 #   - Wallpaper-cache (from avraniel/wallpaper-cache)
 #   - Optional apps (Viber, Signal, Zoom, Thunar + plugins)
+#   - Optional Spicetify (Spotify customization)
 #   - Optional fstab configuration for storage drives
 
 set -e
@@ -123,6 +124,7 @@ cd "$SCRIPT_DIR"
 echo -e "${GREEN}► Step 2: Applying custom configuration files${NC}"
 echo ""
 
+# Fastfetch config
 if [ -d "$SCRIPT_DIR/fastfetch" ]; then
     echo "Copying fastfetch config..."
     mkdir -p "$HOME/.config/fastfetch"
@@ -132,6 +134,7 @@ else
     echo -e "${YELLOW}  ⚠ fastfetch directory not found, skipping${NC}"
 fi
 
+# Fish config
 if [ -d "$SCRIPT_DIR/fish" ]; then
     echo "Copying fish config..."
     mkdir -p "$HOME/.config/fish"
@@ -139,6 +142,27 @@ if [ -d "$SCRIPT_DIR/fish" ]; then
     echo -e "${GREEN}  ✓ fish config applied${NC}"
 else
     echo -e "${YELLOW}  ⚠ fish directory not found, skipping${NC}"
+fi
+
+# ─── NEW: Kitty config ──────────────────────────────────────────────
+if [ -d "$SCRIPT_DIR/kitty" ]; then
+    echo "Copying kitty config..."
+    mkdir -p "$HOME/.config/kitty"
+    cp -r "$SCRIPT_DIR/kitty/"* "$HOME/.config/kitty/" 2>/dev/null || true
+    echo -e "${GREEN}  ✓ kitty config applied${NC}"
+    
+    # Check if kitty is installed
+    if ! command -v kitty &> /dev/null; then
+        echo -e "${YELLOW}  ⚠ kitty terminal is not installed. Config copied, but kitty itself is missing.${NC}"
+        echo -e "${YELLOW}  Install kitty with:${NC}"
+        echo -e "    - Arch: sudo pacman -S kitty"
+        echo -e "    - Fedora: sudo dnf install kitty"
+        echo -e "    - Debian/Ubuntu: sudo apt install kitty"
+    else
+        echo -e "${GREEN}  ✓ kitty terminal detected${NC}"
+    fi
+else
+    echo -e "${YELLOW}  ⚠ kitty directory not found, skipping${NC}"
 fi
 
 # ─── Step 3: Install Wallpaper Cache ───────────────────────────────
@@ -282,9 +306,184 @@ fi
 
 echo ""
 
-# ─── Step 5: Fstab Configuration ────────────────────────────────────
+# ─── Step 5: Spicetify Installation ────────────────────────────────
 
-echo -e "${GREEN}► Step 5: Optional fstab configuration${NC}"
+echo -e "${GREEN}► Step 5: Optional Spicetify installation${NC}"
+echo ""
+
+echo -e "${CYAN}Spicetify is a command-line tool to customize the official Spotify client.${NC}"
+echo -e "${CYAN}It allows you to install themes, extensions, and the Spicetify Marketplace.${NC}"
+echo ""
+echo -e "${YELLOW}Before proceeding:${NC}"
+echo -e "  1. Spotify must be installed (Flatpak, APT, or AUR version)"
+echo -e "  2. Spotify must be opened at least once (to generate config files)"
+echo ""
+
+read -p "Install Spicetify with Marketplace? (y/n) " install_spicetify
+
+if [[ $install_spicetify == "y" || $install_spicetify == "Y" ]]; then
+    
+    # ── Check if Spotify is installed ──
+    SPOTIFY_INSTALLED=false
+    if command -v spotify &> /dev/null; then
+        SPOTIFY_INSTALLED=true
+        SPOTIFY_TYPE="system"
+        echo -e "${GREEN}  ✓ Spotify (system) detected${NC}"
+    elif flatpak list 2>/dev/null | grep -q "com.spotify.Client"; then
+        SPOTIFY_INSTALLED=true
+        SPOTIFY_TYPE="flatpak"
+        echo -e "${GREEN}  ✓ Spotify (Flatpak) detected${NC}"
+    elif pacman -Q spotify-launcher 2>/dev/null &> /dev/null; then
+        SPOTIFY_INSTALLED=true
+        SPOTIFY_TYPE="arch-launcher"
+        echo -e "${GREEN}  ✓ Spotify (spotify-launcher) detected${NC}"
+    else
+        echo -e "${YELLOW}  ⚠ Spotify not detected. Please install Spotify first.${NC}"
+        echo -e "${YELLOW}    - For APT: sudo apt install spotify-client${NC}"
+        echo -e "${YELLOW}    - For Arch: yay -S spotify-launcher${NC}"
+        echo -e "${YELLOW}    - For Flatpak: flatpak install flathub com.spotify.Client${NC}"
+        echo ""
+        read -p "Continue anyway? (y/n) " continue_without_spotify
+        if [[ $continue_without_spotify != "y" && $continue_without_spotify != "Y" ]]; then
+            echo -e "${YELLOW}⏭ Skipping Spicetify installation.${NC}"
+            SPOTIFY_INSTALLED=false
+        fi
+    fi
+    
+    # ── Proceed with Spicetify installation ──
+    if [[ $SPOTIFY_INSTALLED == true ]] || [[ $continue_without_spotify == "y" || $continue_without_spotify == "Y" ]]; then
+        
+        echo -e "${YELLOW}Installing Spicetify...${NC}"
+        echo ""
+        
+        # ── Detect package manager for dependencies ──
+        echo "Installing dependencies..."
+        case $PKG_MANAGER in
+            pacman)
+                $INSTALL_CMD curl unzip
+                ;;
+            dnf)
+                $INSTALL_CMD curl unzip
+                ;;
+            apt)
+                $INSTALL_CMD curl unzip
+                ;;
+            *)
+                echo -e "${YELLOW}⚠ Please ensure curl and unzip are installed.${NC}"
+                ;;
+        esac
+        
+        # ── Install Spicetify ──
+        echo "Downloading and running Spicetify installer..."
+        curl -fsSL https://raw.githubusercontent.com/spicetify/cli/main/install.sh -o /tmp/install_spicetify.sh
+        chmod +x /tmp/install_spicetify.sh
+        
+        # Run the installer (it will prompt for Marketplace installation)
+        bash /tmp/install_spicetify.sh
+        
+        # ── Add to PATH if needed ──
+        if ! command -v spicetify &> /dev/null; then
+            echo -e "${YELLOW}Adding Spicetify to PATH...${NC}"
+            export PATH="$HOME/.spicetify:$PATH"
+            echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$HOME/.bashrc"
+            echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
+            echo -e "${GREEN}  ✓ Spicetify added to PATH${NC}"
+        fi
+        
+        # ── Configure based on Spotify type ──
+        echo ""
+        echo -e "${YELLOW}Configuring Spicetify for your Spotify installation...${NC}"
+        
+        case $SPOTIFY_TYPE in
+            flatpak)
+                # Find Flatpak Spotify path
+                FLATPAK_SPOTIFY_PATH=$(flatpak info --show-location com.spotify.Client 2>/dev/null)
+                if [ -n "$FLATPAK_SPOTIFY_PATH" ]; then
+                    # Try common path locations
+                    if [ -d "$FLATPAK_SPOTIFY_PATH/files/extra/share/spotify" ]; then
+                        SPOTIFY_PATH="$FLATPAK_SPOTIFY_PATH/files/extra/share/spotify"
+                    elif [ -d "$FLATPAK_SPOTIFY_PATH/files/share/spotify" ]; then
+                        SPOTIFY_PATH="$FLATPAK_SPOTIFY_PATH/files/share/spotify"
+                    fi
+                    
+                    # Set prefs path
+                    PREFS_PATH="$HOME/.var/app/com.spotify.Client/config/spotify/prefs"
+                    
+                    echo "Setting Spotify path: $SPOTIFY_PATH"
+                    spicetify config spotify_path "$SPOTIFY_PATH"
+                    echo "Setting prefs path: $PREFS_PATH"
+                    spicetify config prefs_path "$PREFS_PATH"
+                    
+                    # Fix permissions
+                    echo "Fixing permissions..."
+                    sudo chmod -R a+wr "$FLATPAK_SPOTIFY_PATH/files/extra/share/spotify" 2>/dev/null || true
+                    sudo chmod -R a+wr "$FLATPAK_SPOTIFY_PATH/files/share/spotify" 2>/dev/null || true
+                    echo -e "${GREEN}  ✓ Flatpak Spotify configured${NC}"
+                else
+                    echo -e "${YELLOW}  ⚠ Could not detect Flatpak Spotify path.${NC}"
+                    echo -e "${YELLOW}  You may need to manually configure Spicetify.${NC}"
+                fi
+                ;;
+                
+            arch-launcher)
+                echo "Setting path for spotify-launcher..."
+                spicetify config spotify_path "$HOME/.local/share/spotify-launcher/usr/share/spotify"
+                spicetify config prefs_path "$HOME/.config/spotify/prefs"
+                echo -e "${GREEN}  ✓ spotify-launcher configured${NC}"
+                ;;
+                
+            system)
+                echo "Setting path for system Spotify..."
+                spicetify config spotify_path "/usr/share/spotify"
+                spicetify config prefs_path "$HOME/.config/spotify/prefs"
+                
+                # Fix permissions
+                echo "Fixing permissions..."
+                sudo chmod a+wr /usr/share/spotify
+                sudo chmod a+wr /usr/share/spotify/Apps -R 2>/dev/null || true
+                echo -e "${GREEN}  ✓ System Spotify configured${NC}"
+                ;;
+                
+            *)
+                echo -e "${YELLOW}⚠ Unknown Spotify type. You may need to manually configure:${NC}"
+                echo -e "  spicetify config spotify_path /path/to/spotify"
+                echo -e "  spicetify config prefs_path /path/to/prefs"
+                ;;
+        esac
+        
+        # ── Apply Spicetify ──
+        echo ""
+        echo -e "${YELLOW}Applying Spicetify...${NC}"
+        
+        if command -v spicetify &> /dev/null; then
+            spicetify backup apply || {
+                echo -e "${YELLOW}First-time setup may need manual intervention.${NC}"
+                echo -e "${YELLOW}Try running these commands manually:${NC}"
+                echo "  spicetify backup apply"
+                echo "  spicetify apply"
+            }
+            echo -e "${GREEN}  ✓ Spicetify applied${NC}"
+            
+            # ── Verify Marketplace ──
+            echo ""
+            echo -e "${BLUE}Spicetify Marketplace should now be available in Spotify.${NC}"
+            echo -e "${BLUE}If not, run: ${YELLOW}spicetify apply${NC}"
+        else
+            echo -e "${RED}✗ Spicetify command not found. Please check installation.${NC}"
+            echo -e "${YELLOW}You may need to restart your terminal or log out and back in.${NC}"
+        fi
+        
+        echo -e "${GREEN}✓ Spicetify installation completed${NC}"
+    fi
+else
+    echo -e "${YELLOW}⏭ Skipping Spicetify installation.${NC}"
+fi
+
+echo ""
+
+# ─── Step 6: Fstab Configuration ────────────────────────────────────
+
+echo -e "${GREEN}► Step 6: Optional fstab configuration${NC}"
 echo ""
 
 echo -e "${CYAN}This step can add entries for your storage drives to /etc/fstab.${NC}"
@@ -353,9 +552,9 @@ else
     echo -e "${YELLOW}⏭ Skipping fstab configuration.${NC}"
 fi
 
-# ─── Step 6: Finalize Setup ────────────────────────────────────────
+# ─── Step 7: Finalize Setup ─────────────────────────────────────────
 
-echo -e "${GREEN}► Step 6: Finalizing setup${NC}"
+echo -e "${GREEN}► Step 7: Finalizing setup${NC}"
 echo ""
 
 mkdir -p "$HOME/.local/bin"
@@ -376,7 +575,7 @@ if command -v systemctl &> /dev/null; then
     fi
 fi
 
-# ─── Step 7: Post-installation Guide ───────────────────────────────
+# ─── Step 8: Post-installation Guide ───────────────────────────────
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -404,11 +603,17 @@ echo -e "${BLUE}┌─ Installed Components ────────────
 echo -e "${BLUE}│  ${GREEN}✓ Caelestia KDE theme${NC}"
 echo -e "${BLUE}│  ${GREEN}✓ Fastfetch config${NC}"
 echo -e "${BLUE}│  ${GREEN}✓ Fish config${NC}"
+echo -e "${BLUE}│  ${GREEN}✓ Kitty config${NC}"
 echo -e "${BLUE}│  ${GREEN}✓ Wallpaper-cache${NC}"
 if [[ $install_apps == "y" || $install_apps == "Y" ]]; then
     echo -e "${BLUE}│  ${GREEN}✓ Viber, Signal, Zoom, Thunar + plugins${NC}"
 else
     echo -e "${BLUE}│  ${YELLOW}No additional applications installed${NC}"
+fi
+if [[ $install_spicetify == "y" || $install_spicetify == "Y" ]]; then
+    echo -e "${BLUE}│  ${GREEN}✓ Spicetify + Marketplace${NC}"
+else
+    echo -e "${BLUE}│  ${YELLOW}No Spicetify installation${NC}"
 fi
 if [[ $run_fstab == "y" || $run_fstab == "Y" ]]; then
     echo -e "${BLUE}│  ${GREEN}✓ Fstab updated for storage drives${NC}"
