@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # ✦ C A E L E S T I A   K D E   +   C U S T O M   C O N F I G S ✦
-# Consolidated installer for https://github.com/avraniel/config_kdecaelestia
+# TUI Installer for https://github.com/avraniel/config_kdecaelestia
 
-# Set safe options
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -22,33 +21,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DIR=""
 LOG_FILE="$HOME/caelestia-install.log"
 
+# ─── Check for whiptail ─────────────────────────────────────────────
+
+if ! command -v whiptail &> /dev/null; then
+    echo "whiptail is required but not installed."
+    echo "Install it with:"
+    echo "  - Arch: sudo pacman -S whiptail"
+    echo "  - Fedora: sudo dnf install whiptail"
+    echo "  - Debian/Ubuntu: sudo apt install whiptail"
+    exit 1
+fi
+
 # ─── Logging ────────────────────────────────────────────────────────
 
 log() {
-    echo -e "$1"
     echo -e "$1" | sed 's/\x1b\[[0-9;]*m//g' >> "$LOG_FILE"
 }
 
 log_info() {
-    log "${BLUE}ℹ $1${NC}"
+    echo -e "${BLUE}ℹ $1${NC}"
+    log "ℹ $1"
 }
 
 log_success() {
-    log "${GREEN}✓ $1${NC}"
+    echo -e "${GREEN}✓ $1${NC}"
+    log "✓ $1"
 }
 
 log_warning() {
-    log "${YELLOW}⚠ $1${NC}"
+    echo -e "${YELLOW}⚠ $1${NC}"
+    log "⚠ $1"
 }
 
 log_error() {
-    log "${RED}✗ $1${NC}"
+    echo -e "${RED}✗ $1${NC}"
+    log "✗ $1"
 }
 
 log_section() {
-    log ""
-    log "${GREEN}► $1${NC}"
-    log ""
+    echo ""
+    echo -e "${GREEN}► $1${NC}"
+    log "► $1"
+    echo ""
 }
 
 # ─── Error Handler ──────────────────────────────────────────────────
@@ -61,67 +75,7 @@ cleanup() {
 
 trap 'cleanup' EXIT INT TERM
 
-handle_error() {
-    local line=$1
-    local exit_code=$2
-    log_error "Error at line $line (exit code: $exit_code)"
-    log_warning "Check $LOG_FILE for details"
-    
-    echo ""
-    echo -e "${YELLOW}Options:${NC}"
-    echo "  1. Retry"
-    echo "  2. Ignore and continue"
-    echo "  3. Exit"
-    read -p "Choose (1-3): " choice
-    
-    case $choice in
-        1) return 0 ;;
-        2) return 1 ;;
-        *) log_error "Exiting."; exit $exit_code ;;
-    esac
-}
-
-err_handler() {
-    local exit_code=$?
-    local line=$1
-    handle_error "$line" "$exit_code" || true
-}
-
-trap 'err_handler $LINENO' ERR
-
-# ─── Banner ──────────────────────────────────────────────────────────
-
-log_success "╔════════════════════════════════════════════════════════════╗"
-log_success "║     ✦ C A E L E S T I A   K D E   I N S T A L L E R ✦     ║"
-log_success "╚════════════════════════════════════════════════════════════╝"
-log_info "Config source: $SCRIPT_DIR"
-log_info "Log file: $LOG_FILE"
-echo ""
-
-# ─── Pre-flight Checks ──────────────────────────────────────────────
-
-log_section "Pre-flight checks"
-
-check_command() {
-    if ! command -v "$1" &> /dev/null; then
-        log_error "$1 is not installed"
-        return 1
-    fi
-    return 0
-}
-
-if ! check_command git; then
-    log_error "Please install git first"
-    exit 1
-fi
-
-if ! pgrep -x "plasmashell" &> /dev/null; then
-    log_warning "KDE Plasma not detected. Requires KDE Plasma 6.0+."
-    echo ""
-fi
-
 TEMP_DIR="$(mktemp -d)"
-log_success "Created temp directory: $TEMP_DIR"
 
 # ─── Package Manager Detection ──────────────────────────────────────
 
@@ -146,13 +100,7 @@ elif command -v dnf &> /dev/null; then
 elif command -v apt &> /dev/null; then
     PKG_MANAGER="apt"
     INSTALL_CMD="sudo apt install -y"
-else
-    log_warning "Could not detect package manager. Some features will be disabled."
 fi
-
-log_success "Package manager: $PKG_MANAGER"
-log_success "AUR helper: ${AUR_HELPER:-none}"
-echo ""
 
 # ─── Safe Package Installation ──────────────────────────────────────
 
@@ -162,22 +110,13 @@ safe_install() {
     
     case $PKG_MANAGER in
         pacman)
-            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || {
-                log_warning "Failed to install $pkg"
-                return 1
-            }
+            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || return 1
             ;;
         dnf)
-            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || {
-                log_warning "Failed to install $pkg"
-                return 1
-            }
+            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || return 1
             ;;
         apt)
-            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || {
-                log_warning "Failed to install $pkg"
-                return 1
-            }
+            $INSTALL_CMD "$pkg" 2>&1 | tee -a "$LOG_FILE" || return 1
             ;;
         *)
             log_warning "Cannot install $pkg - unsupported package manager"
@@ -187,846 +126,501 @@ safe_install() {
     return 0
 }
 
-# ─── Step 1: Install Caelestia KDE ──────────────────────────────────
+# ─── TUI Functions ──────────────────────────────────────────────────
 
-log_section "Step 1: Installing Caelestia KDE"
-
-CAELESTIA_DIR="$HOME/caelestia-dots-kde"
-
-if [ -d "$CAELESTIA_DIR" ]; then
-    log_warning "Directory $CAELESTIA_DIR already exists."
-    read -p "Remove and re-clone for fresh install? (y/n) " reinstall
-    if [[ $reinstall == "y" || $reinstall == "Y" ]]; then
-        rm -rf "$CAELESTIA_DIR" || {
-            log_error "Failed to remove $CAELESTIA_DIR"
-            exit 1
-        }
-        log_success "Removed existing directory"
-    else
-        log_info "Using existing directory"
-    fi
-fi
-
-if [ ! -d "$CAELESTIA_DIR" ]; then
-    log_info "Cloning caelestia-dots-kde..."
-    git clone https://github.com/ladybug-me/caelestia-dots-kde "$CAELESTIA_DIR" 2>&1 | tee -a "$LOG_FILE" || {
-        log_error "Failed to clone repository"
-        exit 1
-    }
-    log_success "Clone completed"
-fi
-
-if [ -d "$CAELESTIA_DIR" ] && [ -f "$CAELESTIA_DIR/setup.sh" ]; then
-    cd "$CAELESTIA_DIR"
-    log_info "Running Caelestia setup script..."
-    log_warning "You may be prompted for your password multiple times."
-    echo ""
+show_menu() {
+    local title="✧ Caelestia KDE Installer ✧"
+    local msg="Select components to install (Space to toggle, Enter to confirm)"
     
-    chmod +x setup.sh
-    bash ./setup.sh 2>&1 | tee -a "$LOG_FILE" || {
-        log_warning "Caelestia setup encountered issues"
-        read -p "Continue anyway? (y/n) " continue_anyway
-        if [[ $continue_anyway != "y" && $continue_anyway != "Y" ]]; then
-            exit 1
-        fi
-    }
-    cd "$SCRIPT_DIR"
-else
-    log_error "Caelestia repository incomplete - missing setup.sh"
-    exit 1
-fi
-
-# ─── Step 2: Apply Custom Configs ──────────────────────────────────
-
-log_section "Step 2: Applying custom configuration files"
-
-safe_copy_config() {
-    local src=$1
-    local dest=$2
-    local name=$3
+    # Build checklist options
+    local options=(
+        "caelestia" "Caelestia KDE theme (full setup)" "ON"
+        "configs" "Custom configs (fastfetch, fish, kitty)" "ON"
+        "kitty" "Kitty terminal" "OFF"
+        "icons" "Neo-Candy-Papirus-Carmine icons" "OFF"
+        "wallpapers" "Wallpaper-cache" "ON"
+        "clock" "Modern Clock widget" "OFF"
+        "apps" "Applications (Viber, Signal, Zoom, Thunar, Chrome)" "OFF"
+        "niri" "Niri Animation Switcher" "OFF"
+        "spicetify" "Spotify + Spicetify" "OFF"
+        "fstab" "Fstab configuration (storage drives)" "OFF"
+    )
     
-    if [ -d "$src" ]; then
-        log_info "Copying $name config..."
-        mkdir -p "$dest"
-        cp -r "$src/"* "$dest/" 2>/dev/null || true
-        if [ -n "$(ls -A "$src" 2>/dev/null)" ]; then
-            log_success "  ✓ $name config applied"
+    # Use whiptail checklist
+    SELECTED=$(whiptail --title "$title" --checklist "$msg" 20 80 10 \
+        "${options[@]}" 3>&1 1>&2 2>&3)
+    
+    # Parse selections
+    INSTALL_CAELESTIA="off"
+    INSTALL_CONFIGS="off"
+    INSTALL_KITTY="off"
+    INSTALL_ICONS="off"
+    INSTALL_WALLPAPERS="off"
+    INSTALL_CLOCK="off"
+    INSTALL_APPS="off"
+    INSTALL_NIRI="off"
+    INSTALL_SPICETIFY="off"
+    INSTALL_FSTAB="off"
+    
+    if [[ "$SELECTED" == *"caelestia"* ]]; then INSTALL_CAELESTIA="on"; fi
+    if [[ "$SELECTED" == *"configs"* ]]; then INSTALL_CONFIGS="on"; fi
+    if [[ "$SELECTED" == *"kitty"* ]]; then INSTALL_KITTY="on"; fi
+    if [[ "$SELECTED" == *"icons"* ]]; then INSTALL_ICONS="on"; fi
+    if [[ "$SELECTED" == *"wallpapers"* ]]; then INSTALL_WALLPAPERS="on"; fi
+    if [[ "$SELECTED" == *"clock"* ]]; then INSTALL_CLOCK="on"; fi
+    if [[ "$SELECTED" == *"apps"* ]]; then INSTALL_APPS="on"; fi
+    if [[ "$SELECTED" == *"niri"* ]]; then INSTALL_NIRI="on"; fi
+    if [[ "$SELECTED" == *"spicetify"* ]]; then INSTALL_SPICETIFY="on"; fi
+    if [[ "$SELECTED" == *"fstab"* ]]; then INSTALL_FSTAB="on"; fi
+}
+
+show_clock_menu() {
+    CLOCK_CHOICE=$(whiptail --title "Modern Clock Widget" \
+        --radiolist "Select a clock widget to install:" 15 70 3 \
+        "1" "Colorful Digital Clock (color picker + custom separator)" ON \
+        "2" "Nothing OS Digital Clock (pill-style)" OFF \
+        "3" "Skip (install manually later)" OFF \
+        3>&1 1>&2 2>&3)
+    
+    case $CLOCK_CHOICE in
+        1) CLOCK_SELECT="colorful" ;;
+        2) CLOCK_SELECT="nothing" ;;
+        *) CLOCK_SELECT="skip" ;;
+    esac
+}
+
+show_spicetify_options() {
+    SPOTIFY_LAUNCH=$(whiptail --title "Spotify Setup" \
+        --radiolist "Spotify needs to be launched at least once before Spicetify works" 15 70 3 \
+        "1" "Launch Spotify now (wait for you to log in)" ON \
+        "2" "Launch Spotify now (continue in background)" OFF \
+        "3" "Skip (launch manually later)" OFF \
+        3>&1 1>&2 2>&3)
+    
+    case $SPOTIFY_LAUNCH in
+        1) SPOTIFY_ACTION="wait" ;;
+        2) SPOTIFY_ACTION="background" ;;
+        *) SPOTIFY_ACTION="skip" ;;
+    esac
+}
+
+# ─── Installation Functions ─────────────────────────────────────────
+
+install_caelestia() {
+    log_section "Installing Caelestia KDE"
+    
+    CAELESTIA_DIR="$HOME/caelestia-dots-kde"
+    
+    if [ -d "$CAELESTIA_DIR" ]; then
+        if whiptail --title "Caelestia" --yesno "Directory ~/caelestia-dots-kde already exists. Remove and re-clone?" 8 60; then
+            rm -rf "$CAELESTIA_DIR"
         else
-            log_warning "  ⚠ $name directory is empty"
+            log_info "Using existing directory"
         fi
-    else
-        log_warning "  ⚠ $name directory not found, skipping"
+    fi
+    
+    if [ ! -d "$CAELESTIA_DIR" ]; then
+        log_info "Cloning caelestia-dots-kde..."
+        git clone https://github.com/ladybug-me/caelestia-dots-kde "$CAELESTIA_DIR" 2>&1 | tee -a "$LOG_FILE"
+    fi
+    
+    if [ -f "$CAELESTIA_DIR/setup.sh" ]; then
+        cd "$CAELESTIA_DIR"
+        log_info "Running Caelestia setup script..."
+        chmod +x setup.sh
+        bash ./setup.sh 2>&1 | tee -a "$LOG_FILE" || {
+            log_warning "Caelestia setup encountered issues"
+            whiptail --title "Warning" --msgbox "Caelestia setup had issues. Check the log file." 8 60
+        }
+        cd "$SCRIPT_DIR"
     fi
 }
 
-safe_copy_config "$SCRIPT_DIR/fastfetch" "$HOME/.config/fastfetch" "fastfetch"
-safe_copy_config "$SCRIPT_DIR/fish" "$HOME/.config/fish" "fish"
-safe_copy_config "$SCRIPT_DIR/kitty" "$HOME/.config/kitty" "kitty"
-
-# ─── Step 3: Kitty Terminal ─────────────────────────────────────────
-
-log_section "Step 3: Optional Kitty terminal installation"
-
-read -p "Install Kitty terminal? (y/n) " install_kitty
-
-if [[ $install_kitty == "y" || $install_kitty == "Y" ]]; then
-    log_info "Installing Kitty..."
+install_configs() {
+    log_section "Applying custom configuration files"
     
-    if safe_install "kitty"; then
-        if command -v kitty &> /dev/null; then
-            log_success "Kitty installed successfully"
+    safe_copy_config() {
+        local src=$1
+        local dest=$2
+        local name=$3
+        
+        if [ -d "$src" ]; then
+            log_info "Copying $name config..."
+            mkdir -p "$dest"
+            cp -r "$src/"* "$dest/" 2>/dev/null || true
+            log_success "  ✓ $name config applied"
         else
-            log_warning "Kitty installation may have failed. Please check manually."
+            log_warning "  ⚠ $name directory not found, skipping"
         fi
-    fi
-else
-    log_info "Skipping Kitty installation"
-fi
-
-echo ""
-
-# ─── Step 4: Neo-Candy-Papirus-Carmine Icons ───────────────────────
-
-log_section "Step 4: Optional Neo-Candy-Papirus-Carmine Icons"
-
-echo -e "${CYAN}This icon theme is a combination of Candy, Papirus, and Carmine icons.${NC}"
-echo -e "${CYAN}It will be installed to ~/.local/share/icons/ for your user only.${NC}"
-echo ""
-read -p "Install neo-candy-papirus-carmine-icons-git? (y/n) " install_icons
-
-install_icons_manually() {
-    log_info "Cloning repository from GitHub..."
-    local icon_dir="$TEMP_DIR/neo-candy-papirus-carmine-icons"
-    
-    git clone https://github.com/voidtech/neo-candy-papirus-carmine-icons.git "$icon_dir" 2>&1 | tee -a "$LOG_FILE" || {
-        log_error "Failed to clone icon repository"
-        return 1
     }
     
+    safe_copy_config "$SCRIPT_DIR/fastfetch" "$HOME/.config/fastfetch" "fastfetch"
+    safe_copy_config "$SCRIPT_DIR/fish" "$HOME/.config/fish" "fish"
+    safe_copy_config "$SCRIPT_DIR/kitty" "$HOME/.config/kitty" "kitty"
+}
+
+install_kitty() {
+    log_section "Installing Kitty terminal"
+    safe_install "kitty"
+}
+
+install_icons() {
+    log_section "Installing Neo-Candy-Papirus-Carmine Icons"
+    
+    if [ -n "$AUR_HELPER" ]; then
+        $AUR_CMD neo-candy-papirus-carmine-icons-git 2>&1 | tee -a "$LOG_FILE" || {
+            log_warning "AUR installation failed, trying manual install..."
+            install_icons_manually
+        }
+    else
+        install_icons_manually
+    fi
+    
+    if command -v kwriteconfig6 &> /dev/null; then
+        kwriteconfig6 --file kdeglobals --group Icons --key Theme "neo-candy-papirus-carmine-icons" 2>&1 | tee -a "$LOG_FILE"
+    fi
+}
+
+install_icons_manually() {
+    local icon_dir="$TEMP_DIR/neo-candy-papirus-carmine-icons"
+    git clone https://github.com/voidtech/neo-candy-papirus-carmine-icons.git "$icon_dir" 2>&1 | tee -a "$LOG_FILE"
     mkdir -p "$HOME/.local/share/icons"
     
-    # Find the actual theme folder (could be inside the repo)
     if [ -d "$icon_dir/neo-candy-papirus-carmine-icons" ]; then
         cp -r "$icon_dir/neo-candy-papirus-carmine-icons" "$HOME/.local/share/icons/"
-    elif [ -d "$icon_dir/src" ]; then
-        cp -r "$icon_dir/src" "$HOME/.local/share/icons/neo-candy-papirus-carmine-icons"
     else
         cp -r "$icon_dir/." "$HOME/.local/share/icons/neo-candy-papirus-carmine-icons/"
     fi
-    
-    log_success "Icon theme installed manually to ~/.local/share/icons/"
-    log_info "You can apply it from: System Settings → Appearance → Icons"
-    return 0
 }
 
-if [[ $install_icons == "y" || $install_icons == "Y" ]]; then
-    log_info "Installing icon theme..."
+install_wallpapers() {
+    log_section "Installing wallpaper-cache"
     
-    case $PKG_MANAGER in
-        pacman)
-            if [ -n "$AUR_HELPER" ]; then
-                log_info "Installing from AUR using $AUR_HELPER..."
-                $AUR_CMD neo-candy-papirus-carmine-icons-git 2>&1 | tee -a "$LOG_FILE" && {
-                    log_success "Icon theme installed via AUR"
-                } || {
-                    log_warning "AUR installation failed, trying manual install..."
-                    install_icons_manually
-                }
-            else
-                log_warning "No AUR helper found. Attempting manual installation..."
-                install_icons_manually
-            fi
-            ;;
-        *)
-            log_info "Attempting manual installation..."
-            install_icons_manually
-            ;;
-    esac
+    WALLPAPER_DIR="$HOME/wallpaper-cache"
     
-    # Set as default icon theme if configured
-    if command -v kwriteconfig6 &> /dev/null; then
-        log_info "Setting as default icon theme..."
-        kwriteconfig6 --file kdeglobals --group Icons --key Theme "neo-candy-papirus-carmine-icons" 2>&1 | tee -a "$LOG_FILE" || {
-            log_warning "Could not set as default icon theme. Apply manually in System Settings."
-        }
+    if [ -d "$WALLPAPER_DIR" ]; then
+        if whiptail --title "Wallpaper Cache" --yesno "Directory ~/wallpaper-cache already exists. Remove and re-clone?" 8 60; then
+            rm -rf "$WALLPAPER_DIR"
+        fi
     fi
     
-    log_success "Icon theme installation completed"
-else
-    log_info "Skipping icon theme installation"
-fi
+    if [ ! -d "$WALLPAPER_DIR" ]; then
+        git clone https://github.com/avraniel/wallpaper-cache.git "$WALLPAPER_DIR" 2>&1 | tee -a "$LOG_FILE"
+    fi
+    
+    if [ -f "$WALLPAPER_DIR/install_wca" ]; then
+        chmod +x "$WALLPAPER_DIR/install_wca"
+        cd "$WALLPAPER_DIR"
+        bash ./install_wca 2>&1 | tee -a "$LOG_FILE"
+        cd "$SCRIPT_DIR"
+    fi
+}
 
-echo ""
-
-# ─── Step 5: Wallpaper Cache ────────────────────────────────────────
-
-log_section "Step 5: Installing wallpaper-cache"
-
-WALLPAPER_DIR="$HOME/wallpaper-cache"
-
-if [ -d "$WALLPAPER_DIR" ]; then
-    log_warning "Directory $WALLPAPER_DIR already exists."
-    read -p "Remove and re-clone for fresh install? (y/n) " reinstall_wallpaper
-    if [[ $reinstall_wallpaper == "y" || $reinstall_wallpaper == "Y" ]]; then
-        rm -rf "$WALLPAPER_DIR" || true
-        log_success "Removed existing directory"
+install_clock() {
+    log_section "Installing Modern Clock widget"
+    
+    local repo=""
+    local name=""
+    local plasmoid_id=""
+    
+    if [[ "$CLOCK_SELECT" == "colorful" ]]; then
+        repo="https://github.com/v-n7k/plasma-panel-digital-clock.git"
+        name="Colorful Digital Clock"
+        plasmoid_id="co.n7k.plasma.digitalclock"
+    elif [[ "$CLOCK_SELECT" == "nothing" ]]; then
+        repo="https://github.com/jaxparrow07/nothing-kde-widgets.git"
+        name="Nothing Digital Clock"
+        plasmoid_id="nothing.clock.digital"
     else
-        log_info "Using existing directory"
+        return
     fi
-fi
-
-if [ ! -d "$WALLPAPER_DIR" ]; then
-    log_info "Cloning wallpaper-cache..."
-    git clone https://github.com/avraniel/wallpaper-cache.git "$WALLPAPER_DIR" 2>&1 | tee -a "$LOG_FILE" || {
-        log_warning "Failed to clone wallpaper-cache"
-        log_info "Continuing without wallpapers"
-    }
-fi
-
-if [ -f "$WALLPAPER_DIR/install_wca" ]; then
-    log_info "Running install_wca script..."
-    chmod +x "$WALLPAPER_DIR/install_wca"
-    cd "$WALLPAPER_DIR"
-    bash ./install_wca 2>&1 | tee -a "$LOG_FILE" || {
-        log_warning "install_wca script encountered issues"
-    }
-    cd "$SCRIPT_DIR"
-    log_success "wallpaper-cache installed"
-else
-    log_warning "install_wca script not found in wallpaper-cache"
-    log_info "Repository cloned to $WALLPAPER_DIR"
-fi
-
-# ─── Step 6: Modern Clock Widget ────────────────────────────────────
-
-log_section "Step 6: Optional Modern Clock widget installation"
-
-echo -e "${CYAN}Modern Clock options:${NC}"
-echo "  1. Colorful Digital Clock (color picker + custom separator)"
-echo "  2. Nothing OS Digital Clock (pill-style)"
-echo "  3. Skip"
-echo ""
-read -p "Install a Modern Clock widget? (y/n) " install_clock
-
-if [[ $install_clock == "y" || $install_clock == "Y" ]]; then
-    echo ""
-    read -p "Enter choice (1, 2, or 3): " clock_choice
     
-    install_clock_widget() {
-        local repo=$1
-        local name=$2
-        local plasmoid_id=$3
-        
-        log_info "Installing $name..."
-        
-        mkdir -p "$HOME/.local/share/plasma/plasmoids"
-        
-        local clock_dir="$TEMP_DIR/${name// /-}"
-        git clone "$repo" "$clock_dir" 2>&1 | tee -a "$LOG_FILE" || {
-            log_error "Failed to clone $name"
-            return 1
-        }
-        
-        if [ -d "$clock_dir/package" ]; then
-            mkdir -p "$HOME/.local/share/plasma/plasmoids/$plasmoid_id"
-            cp -r "$clock_dir/package/." "$HOME/.local/share/plasma/plasmoids/$plasmoid_id/"
-        elif [ -d "$clock_dir/packages/clock-digital" ]; then
-            if command -v kpackagetool6 &> /dev/null; then
-                cd "$clock_dir"
-                kpackagetool6 --type Plasma/Applet -i packages/clock-digital 2>&1 | tee -a "$LOG_FILE" || true
-                cd "$SCRIPT_DIR"
-            elif command -v kpackagetool5 &> /dev/null; then
-                cd "$clock_dir"
-                kpackagetool5 --type Plasma/Applet -i packages/clock-digital 2>&1 | tee -a "$LOG_FILE" || true
-                cd "$SCRIPT_DIR"
-            else
-                cp -r "$clock_dir/packages/clock-digital/"* "$HOME/.local/share/plasma/plasmoids/" 2>/dev/null || true
-            fi
-        else
-            log_error "Could not find package structure for $name"
-            return 1
-        fi
-        
-        rm -rf "$clock_dir"
-        
-        # Restart Plasma safely
-        log_info "Restarting Plasma shell..."
-        if command -v kquitapp6 &> /dev/null; then
-            kquitapp6 plasmashell 2>/dev/null || true
-        elif command -v kquitapp5 &> /dev/null; then
-            kquitapp5 plasmashell 2>/dev/null || true
-        else
-            log_warning "Could not restart Plasma shell. Please log out and back in."
-            return 0
-        fi
-        
-        sleep 2
-        if command -v kstart6 &> /dev/null; then
-            kstart6 plasmashell 2>/dev/null || true
-        elif command -v kstart5 &> /dev/null; then
-            kstart5 plasmashell 2>/dev/null || true
-        fi
-        
-        log_success "$name installed"
-        log_info "Add it to your panel: Right-click panel → Add Widgets"
-        return 0
-    }
+    mkdir -p "$HOME/.local/share/plasma/plasmoids"
+    local clock_dir="$TEMP_DIR/clock-widget"
+    git clone "$repo" "$clock_dir" 2>&1 | tee -a "$LOG_FILE"
     
-    case $clock_choice in
-        1)
-            install_clock_widget \
-                "https://github.com/v-n7k/plasma-panel-digital-clock.git" \
-                "Colorful Digital Clock" \
-                "co.n7k.plasma.digitalclock"
-            ;;
-        2)
-            install_clock_widget \
-                "https://github.com/jaxparrow07/nothing-kde-widgets.git" \
-                "Nothing Digital Clock" \
-                "nothing.clock.digital"
-            ;;
-        *)
-            log_info "Skipping clock installation"
-            ;;
-    esac
-else
-    log_info "Skipping clock widget installation"
-fi
+    if [ -d "$clock_dir/package" ]; then
+        mkdir -p "$HOME/.local/share/plasma/plasmoids/$plasmoid_id"
+        cp -r "$clock_dir/package/." "$HOME/.local/share/plasma/plasmoids/$plasmoid_id/"
+    elif [ -d "$clock_dir/packages/clock-digital" ]; then
+        if command -v kpackagetool6 &> /dev/null; then
+            cd "$clock_dir"
+            kpackagetool6 --type Plasma/Applet -i packages/clock-digital 2>&1 | tee -a "$LOG_FILE"
+            cd "$SCRIPT_DIR"
+        fi
+    fi
+    
+    # Restart Plasma
+    kquitapp6 plasmashell 2>/dev/null || true
+    sleep 2
+    kstart6 plasmashell 2>/dev/null || true
+}
 
-echo ""
-
-# ─── Step 7: Optional Applications ──────────────────────────────────
-
-log_section "Step 7: Optional applications"
-
-echo -e "${CYAN}Applications available:${NC}"
-echo "  • Viber (messaging)"
-echo "  • Signal (secure messaging)"
-echo "  • Zoom (video conferencing)"
-echo "  • Thunar + plugins (file manager)"
-echo ""
-read -p "Install these applications? (y/n) " install_apps
-
-if [[ $install_apps == "y" || $install_apps == "Y" ]]; then
-    log_info "Installing applications..."
+install_apps() {
+    log_section "Installing applications"
     
     case $PKG_MANAGER in
         pacman)
-            log_info "Installing from official repositories..."
             safe_install "thunar" || true
             safe_install "thunar-volman" || true
             safe_install "thunar-shares-plugin" || true
             
             if [ -n "$AUR_HELPER" ]; then
-                log_info "Installing from AUR using $AUR_HELPER..."
-                $AUR_CMD viber signal-desktop zoom 2>&1 | tee -a "$LOG_FILE" || {
-                    log_warning "Some AUR packages failed to install"
-                }
+                $AUR_CMD google-chrome viber signal-desktop zoom 2>&1 | tee -a "$LOG_FILE" || true
             else
-                log_warning "No AUR helper found. Skipping AUR packages."
-                log_info "You can manually install: viber, signal-desktop, zoom"
-                
-                read -p "Install yay (AUR helper) now? (y/n) " install_yay
-                if [[ $install_yay == "y" || $install_yay == "Y" ]]; then
-                    log_info "Installing yay..."
-                    safe_install "git" || true
-                    safe_install "base-devel" || true
-                    git clone https://aur.archlinux.org/yay.git "$TEMP_DIR/yay" 2>&1 | tee -a "$LOG_FILE" || {
-                        log_error "Failed to clone yay"
-                    }
-                    cd "$TEMP_DIR/yay"
-                    makepkg -si --noconfirm 2>&1 | tee -a "$LOG_FILE" || {
-                        log_warning "yay installation failed"
-                    }
-                    cd "$SCRIPT_DIR"
-                    yay -S --needed --noconfirm viber signal-desktop zoom 2>&1 | tee -a "$LOG_FILE" || {
-                        log_warning "AUR packages installation failed"
-                    }
-                fi
+                log_warning "No AUR helper found. Installing from official repos only."
             fi
             ;;
-
         dnf)
-            log_info "Installing for Fedora..."
-            
-            if ! dnf repolist | grep -q "rpmfusion"; then
-                log_info "Enabling RPM Fusion..."
-                sudo dnf install -y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm 2>&1 | tee -a "$LOG_FILE" || true
-                sudo dnf install -y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm 2>&1 | tee -a "$LOG_FILE" || true
-            fi
-            
             safe_install "thunar" || true
             safe_install "thunar-volman" || true
-            log_warning "thunar-shares-plugin may not be available for Fedora"
+            
+            # Google Chrome
+            sudo dnf install -y fedora-workstation-repositories 2>&1 | tee -a "$LOG_FILE" || true
+            sudo dnf config-manager --set-enabled google-chrome 2>&1 | tee -a "$LOG_FILE" || true
+            safe_install "google-chrome-stable" || true
             
             if command -v flatpak &> /dev/null; then
-                log_info "Installing Flatpak versions..."
                 flatpak install -y flathub com.viber.Viber 2>&1 | tee -a "$LOG_FILE" || true
                 flatpak install -y flathub org.signal.Signal 2>&1 | tee -a "$LOG_FILE" || true
                 flatpak install -y flathub us.zoom.Zoom 2>&1 | tee -a "$LOG_FILE" || true
-            else
-                log_warning "Flatpak not found. Skipping Flatpak installations."
             fi
             ;;
-
         apt)
-            log_info "Installing for Debian/Ubuntu..."
-            
             safe_install "thunar" || true
             safe_install "thunar-volman" || true
             safe_install "thunar-shares-plugin" || true
             
+            # Google Chrome
+            wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add - 2>&1 | tee -a "$LOG_FILE" || true
+            echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list 2>&1 | tee -a "$LOG_FILE" || true
+            sudo apt update 2>&1 | tee -a "$LOG_FILE" || true
+            safe_install "google-chrome-stable" || true
+            
             # Signal
-            log_info "Adding Signal repository..."
-            wget -qO- https://updates.signal.org/desktop/apt/keys.asc | gpg --dearmor > "$TEMP_DIR/signal-desktop-keyring.gpg" 2>/dev/null || true
-            sudo mv "$TEMP_DIR/signal-desktop-keyring.gpg" /usr/share/keyrings/ 2>/dev/null || true
-            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/signal-desktop-keyring.gpg] https://updates.signal.org/desktop/apt xenial main" | sudo tee /etc/apt/sources.list.d/signal-xenial.list 2>/dev/null || true
+            wget -qO- https://updates.signal.org/desktop/apt/keys.asc | gpg --dearmor > "$TEMP_DIR/signal.gpg" 2>/dev/null || true
+            sudo mv "$TEMP_DIR/signal.gpg" /usr/share/keyrings/ 2>/dev/null || true
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/signal.gpg] https://updates.signal.org/desktop/apt xenial main" | sudo tee /etc/apt/sources.list.d/signal-xenial.list 2>/dev/null || true
             sudo apt update 2>&1 | tee -a "$LOG_FILE" || true
             safe_install "signal-desktop" || true
             
             # Viber
-            log_info "Downloading Viber..."
             wget -O "$TEMP_DIR/viber.deb" https://download.cdn.viber.com/desktop/Linux/viber.deb 2>&1 | tee -a "$LOG_FILE" || true
             sudo dpkg -i "$TEMP_DIR/viber.deb" 2>&1 | tee -a "$LOG_FILE" || sudo apt install -f -y 2>&1 | tee -a "$LOG_FILE" || true
             
             # Zoom
-            log_info "Downloading Zoom..."
             wget -O "$TEMP_DIR/zoom.deb" https://zoom.us/client/latest/zoom_amd64.deb 2>&1 | tee -a "$LOG_FILE" || true
             sudo dpkg -i "$TEMP_DIR/zoom.deb" 2>&1 | tee -a "$LOG_FILE" || sudo apt install -f -y 2>&1 | tee -a "$LOG_FILE" || true
             ;;
+    esac
+}
 
-        *)
-            log_error "Unsupported package manager: $PKG_MANAGER"
-            log_info "Please install applications manually"
+install_niri() {
+    log_section "Installing Niri Animation Switcher"
+    
+    # Check for Niri
+    if ! command -v niri &> /dev/null; then
+        whiptail --title "Warning" --msgbox "Niri compositor not detected. The tool will be installed but may not work." 8 60
+    fi
+    
+    # Install dependencies
+    case $PKG_MANAGER in
+        pacman)
+            safe_install "python" || true
+            safe_install "python-gobject" || true
+            safe_install "gtk3" || true
+            safe_install "git" || true
+            ;;
+        dnf)
+            safe_install "python3" || true
+            safe_install "python3-gobject" || true
+            safe_install "gtk3" || true
+            safe_install "git" || true
+            ;;
+        apt)
+            safe_install "python3" || true
+            safe_install "python3-gi" || true
+            safe_install "gir1.2-gtk-3.0" || true
+            safe_install "git" || true
             ;;
     esac
     
-    log_success "Application installation completed"
-else
-    log_info "Skipping application installation"
-fi
-
-echo ""
-
-# ─── Step 8: Spotify + Spicetify ────────────────────────────────────
-
-log_section "Step 8: Spotify + Spicetify installation"
-
-echo -e "${CYAN}This step will install:${NC}"
-echo -e "  1. Spotify client (if not already installed)"
-echo -e "  2. Spicetify (for customization)"
-echo -e "  3. Spicetify Marketplace"
-echo ""
-read -p "Install Spotify and Spicetify? (y/n) " install_spotify_spicetify
-
-if [[ $install_spotify_spicetify == "y" || $install_spotify_spicetify == "Y" ]]; then
+    NIRI_DIR="$HOME/niri-anim-switcher"
     
-    # ── Check if Spotify is already installed ──
+    if [ -d "$NIRI_DIR" ]; then
+        if whiptail --title "Niri" --yesno "Directory ~/niri-anim-switcher already exists. Remove and re-clone?" 8 60; then
+            rm -rf "$NIRI_DIR"
+        fi
+    fi
+    
+    if [ ! -d "$NIRI_DIR" ]; then
+        git clone https://github.com/avraniel/niri-anim-switcher.git "$NIRI_DIR" 2>&1 | tee -a "$LOG_FILE"
+    fi
+    
+    if [ -f "$NIRI_DIR/niri-anim-switcher.py" ]; then
+        chmod +x "$NIRI_DIR/niri-anim-switcher.py"
+        mkdir -p "$HOME/.local/bin"
+        cp "$NIRI_DIR/niri-anim-switcher.py" "$HOME/.local/bin/niri-anim"
+        log_success "Niri Animation Switcher installed"
+    fi
+}
+
+install_spicetify() {
+    log_section "Installing Spotify + Spicetify"
+    
+    # Check if Spotify is installed
     SPOTIFY_INSTALLED=false
     SPOTIFY_TYPE=""
     
     if command -v spotify &> /dev/null; then
         SPOTIFY_INSTALLED=true
         SPOTIFY_TYPE="system"
-        log_success "Spotify (system) already detected"
     elif flatpak list 2>/dev/null | grep -q "com.spotify.Client"; then
         SPOTIFY_INSTALLED=true
         SPOTIFY_TYPE="flatpak"
-        log_success "Spotify (Flatpak) already detected"
     elif command -v pacman &> /dev/null && pacman -Q spotify-launcher 2>/dev/null; then
         SPOTIFY_INSTALLED=true
         SPOTIFY_TYPE="arch-launcher"
-        log_success "Spotify (spotify-launcher) already detected"
-    else
-        log_info "Spotify not detected. Installing now..."
     fi
     
-    # ── Install Spotify if not present ──
     if [[ $SPOTIFY_INSTALLED == false ]]; then
         log_info "Installing Spotify..."
-        
         case $PKG_MANAGER in
             pacman)
-                if safe_install "spotify-launcher"; then
-                    SPOTIFY_TYPE="arch-launcher"
-                    SPOTIFY_INSTALLED=true
-                    log_success "Spotify installed via spotify-launcher"
-                elif [ -n "$AUR_HELPER" ]; then
-                    log_info "Installing Spotify from AUR..."
-                    $AUR_CMD spotify 2>&1 | tee -a "$LOG_FILE" && {
-                        SPOTIFY_INSTALLED=true
-                        SPOTIFY_TYPE="system"
-                        log_success "Spotify installed from AUR"
-                    } || {
-                        log_warning "Failed to install Spotify from AUR"
-                    }
-                else
-                    log_warning "Could not install Spotify automatically"
-                    log_info "Please install manually: spotify-launcher or from AUR"
-                fi
+                safe_install "spotify-launcher" && { SPOTIFY_INSTALLED=true; SPOTIFY_TYPE="arch-launcher"; } || true
                 ;;
-                
             dnf)
-                log_info "Installing Spotify for Fedora..."
-                safe_install "lpf-spotify-client" && {
-                    log_warning "Run: lpf-spotify-client to complete installation"
-                    SPOTIFY_INSTALLED=true
-                    SPOTIFY_TYPE="system"
-                } || true
+                safe_install "lpf-spotify-client" && { SPOTIFY_INSTALLED=true; SPOTIFY_TYPE="system"; } || true
                 ;;
-                
             apt)
-                log_info "Installing Spotify for Debian/Ubuntu..."
                 wget -qO "$TEMP_DIR/spotify.gpg" https://download.spotify.com/debian/pubkey_6224F9941A8AA6D1.gpg 2>&1 | tee -a "$LOG_FILE" || true
                 sudo gpg --dearmor --yes -o /etc/apt/trusted.gpg.d/spotify.gpg "$TEMP_DIR/spotify.gpg" 2>&1 | tee -a "$LOG_FILE" || true
                 echo "deb http://repository.spotify.com stable non-free" | sudo tee /etc/apt/sources.list.d/spotify.list 2>&1 | tee -a "$LOG_FILE" || true
                 sudo apt update 2>&1 | tee -a "$LOG_FILE" || true
-                safe_install "spotify-client" && {
-                    SPOTIFY_INSTALLED=true
-                    SPOTIFY_TYPE="system"
-                } || true
-                ;;
-                
-            *)
-                log_warning "Unsupported package manager. Please install Spotify manually:"
-                log_info "https://www.spotify.com/download/linux/"
+                safe_install "spotify-client" && { SPOTIFY_INSTALLED=true; SPOTIFY_TYPE="system"; } || true
                 ;;
         esac
     fi
     
-    # ── Verify Spotify installation ──
-    if [[ $SPOTIFY_INSTALLED == false ]]; then
-        if command -v spotify &> /dev/null; then
-            SPOTIFY_INSTALLED=true
-            SPOTIFY_TYPE="system"
-        elif flatpak list 2>/dev/null | grep -q "com.spotify.Client"; then
-            SPOTIFY_INSTALLED=true
-            SPOTIFY_TYPE="flatpak"
-        fi
-    fi
-    
-    # ── Launch Spotify if installed ──
     if [[ $SPOTIFY_INSTALLED == true ]]; then
-        echo ""
-        log_warning "Spotify needs to be launched at least once before Spicetify works"
-        echo -e "${CYAN}Options:${NC}"
-        echo "  1. Launch Spotify now (wait for you to log in)"
-        echo "  2. Launch Spotify now (continue in background)"
-        echo "  3. Skip (launch manually later)"
-        echo ""
-        read -p "Choose (1, 2, or 3): " spotify_launch_choice
-        
-        if [[ $spotify_launch_choice == "1" || $spotify_launch_choice == "2" ]]; then
+        # Launch Spotify based on user choice
+        if [[ "$SPOTIFY_ACTION" == "wait" || "$SPOTIFY_ACTION" == "background" ]]; then
             log_info "Launching Spotify..."
+            spotify &
+            sleep 5
             
-            case $SPOTIFY_TYPE in
-                flatpak)
-                    flatpak run com.spotify.Client &
-                    ;;
-                *)
-                    spotify &
-                    ;;
-            esac
-            
-            SPOTIFY_PID=$!
-            log_info "Spotify launched (PID: $SPOTIFY_PID)"
-            
-            if [[ $spotify_launch_choice == "1" ]]; then
-                log_warning "Please log in to Spotify and then come back"
-                echo -e "${YELLOW}Press Enter when you're done (or wait 30 seconds)${NC}"
-                read -t 30 -p "Press Enter when ready: " || true
+            if [[ "$SPOTIFY_ACTION" == "wait" ]]; then
+                whiptail --title "Spotify" --msgbox "Please log in to Spotify, then press OK to continue." 8 60
             else
-                log_info "Waiting 15 seconds for Spotify to initialize..."
                 sleep 15
             fi
-        else
-            log_warning "Please launch Spotify manually and log in before continuing"
-            read -p "Press Enter when ready: "
         fi
         
-        # ── Detect Spotify path ──
-        echo ""
-        log_info "Detecting Spotify path for Spicetify..."
-        
-        SPOTIFY_PATH=""
-        PREFS_PATH=""
-        
-        case $SPOTIFY_TYPE in
-            flatpak)
-                FLATPAK_SPOTIFY_PATH=$(flatpak info --show-location com.spotify.Client 2>/dev/null)
-                if [ -n "$FLATPAK_SPOTIFY_PATH" ]; then
-                    if [ -d "$FLATPAK_SPOTIFY_PATH/files/extra/share/spotify" ]; then
-                        SPOTIFY_PATH="$FLATPAK_SPOTIFY_PATH/files/extra/share/spotify"
-                    elif [ -d "$FLATPAK_SPOTIFY_PATH/files/share/spotify" ]; then
-                        SPOTIFY_PATH="$FLATPAK_SPOTIFY_PATH/files/share/spotify"
-                    fi
-                    PREFS_PATH="$HOME/.var/app/com.spotify.Client/config/spotify/prefs"
-                    log_success "Flatpak Spotify detected"
-                fi
-                ;;
-                
-            arch-launcher)
-                SPOTIFY_PATH="$HOME/.local/share/spotify-launcher/usr/share/spotify"
-                PREFS_PATH="$HOME/.config/spotify/prefs"
-                log_success "spotify-launcher detected"
-                ;;
-                
-            system)
-                if [ -d "/usr/share/spotify" ]; then
-                    SPOTIFY_PATH="/usr/share/spotify"
-                elif [ -d "/opt/spotify" ]; then
-                    SPOTIFY_PATH="/opt/spotify"
-                elif [ -d "$HOME/.local/share/spotify" ]; then
-                    SPOTIFY_PATH="$HOME/.local/share/spotify"
-                elif [ -d "/snap/spotify/current/usr/share/spotify" ]; then
-                    SPOTIFY_PATH="/snap/spotify/current/usr/share/spotify"
-                    log_warning "Snap Spotify detected - Spicetify may not work with Snap packages"
-                else
-                    SPOTIFY_PATH=$(find /usr /opt $HOME/.local -type d -name "spotify" 2>/dev/null | head -1)
-                fi
-                PREFS_PATH="$HOME/.config/spotify/prefs"
-                log_success "System Spotify detected"
-                ;;
-                
-            *)
-                log_warning "Unknown Spotify type. Trying automatic detection..."
-                SPOTIFY_PATH=$(find /usr /opt $HOME/.local -type d -name "spotify" 2>/dev/null | head -1)
-                PREFS_PATH="$HOME/.config/spotify/prefs"
-                ;;
-        esac
-        
-        # ── Install Spicetify ──
-        echo ""
+        # Install Spicetify
         log_info "Installing Spicetify..."
-        
         case $PKG_MANAGER in
             pacman) safe_install "curl" || true; safe_install "unzip" || true ;;
             dnf) safe_install "curl" || true; safe_install "unzip" || true ;;
             apt) safe_install "curl" || true; safe_install "unzip" || true ;;
-            *) log_warning "Please ensure curl and unzip are installed" ;;
         esac
         
-        curl -fsSL https://raw.githubusercontent.com/spicetify/cli/main/install.sh -o "$TEMP_DIR/install_spicetify.sh" || {
-            log_error "Failed to download Spicetify installer"
-        }
-        
-        if [ -f "$TEMP_DIR/install_spicetify.sh" ]; then
-            chmod +x "$TEMP_DIR/install_spicetify.sh"
-            bash "$TEMP_DIR/install_spicetify.sh" 2>&1 | tee -a "$LOG_FILE" || {
-                log_warning "Spicetify installation encountered issues"
-            }
-        fi
+        curl -fsSL https://raw.githubusercontent.com/spicetify/cli/main/install.sh -o "$TEMP_DIR/install_spicetify.sh"
+        chmod +x "$TEMP_DIR/install_spicetify.sh"
+        bash "$TEMP_DIR/install_spicetify.sh" 2>&1 | tee -a "$LOG_FILE"
         
         if ! command -v spicetify &> /dev/null && [ -f "$HOME/.spicetify/spicetify" ]; then
             export PATH="$HOME/.spicetify:$PATH"
-            echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$HOME/.bashrc" 2>/dev/null || true
-            echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
-            log_success "Added Spicetify to PATH"
+            echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$HOME/.bashrc"
         fi
         
-        # ── Configure Spicetify ──
         if command -v spicetify &> /dev/null; then
-            echo ""
-            log_info "Configuring Spicetify..."
-            
-            if [ -n "$SPOTIFY_PATH" ] && [ -d "$SPOTIFY_PATH" ]; then
-                log_info "Setting Spotify path: $SPOTIFY_PATH"
-                spicetify config spotify_path "$SPOTIFY_PATH" 2>&1 | tee -a "$LOG_FILE" || true
-            else
-                log_warning "Could not automatically detect Spotify path"
-                log_info "Set manually: spicetify config spotify_path /path/to/spotify"
-            fi
-            
-            if [ -n "$PREFS_PATH" ]; then
-                log_info "Setting prefs path: $PREFS_PATH"
-                spicetify config prefs_path "$PREFS_PATH" 2>&1 | tee -a "$LOG_FILE" || true
-            fi
-            
-            if [ -n "$SPOTIFY_PATH" ] && [ -d "$SPOTIFY_PATH" ]; then
-                log_info "Fixing permissions..."
-                sudo chmod a+wr "$SPOTIFY_PATH" 2>/dev/null || true
-                sudo chmod a+wr "$SPOTIFY_PATH/Apps" 2>/dev/null || true
-            fi
-            
-            echo ""
-            log_info "Applying Spicetify..."
-            
-            timeout 60 spicetify backup apply 2>&1 | tee -a "$LOG_FILE" || {
-                log_warning "Spicetify apply had issues"
-                log_info "Try running: spicetify backup apply"
-            }
-            
-            log_success "Spicetify applied"
-            echo ""
-            log_info "Spicetify Marketplace should now be available in Spotify"
-            log_info "If not, run: spicetify apply"
-            log_info "After Spotify updates: spicetify backup apply"
-            
-        else
-            log_error "Spicetify command not found"
-            log_warning "You may need to restart your terminal or log out and back in"
+            spicetify backup apply 2>&1 | tee -a "$LOG_FILE" || true
+            log_success "Spicetify installed and applied"
         fi
-        
-    else
-        log_warning "Spotify not installed. Skipping Spicetify."
     fi
-    
-else
-    log_info "Skipping Spotify and Spicetify"
-fi
+}
 
-echo ""
-
-# ─── Step 9: Fstab Configuration ────────────────────────────────────
-
-log_section "Step 9: Optional fstab configuration"
-
-echo -e "${CYAN}This will add storage drive entries to /etc/fstab with:${NC}"
-echo -e "  • nofail - system boots even if drive is missing"
-echo -e "  • noatime - reduces disk writes for performance"
-echo ""
-echo -e "${YELLOW}UUID=dda9fe61-a2b0-4d5c-9076-8fa3cff067b4  /home/niel/DATA          ext4  defaults,noatime,nofail  0  2${NC}"
-echo -e "${YELLOW}UUID=e3af8571-cddf-4edc-86f2-5efa6d7fec2e  /run/media/niel/storage  ext4  defaults,noatime,nofail  0  2${NC}"
-echo -e "${YELLOW}UUID=b053948d-acab-49d1-bf0e-79986ab1c3f5  /home/niel/Downloads     ext4  defaults,noatime,nofail  0  2${NC}"
-echo ""
-read -p "Proceed with fstab configuration? (y/n) " run_fstab
-
-if [[ $run_fstab == "y" || $run_fstab == "Y" ]]; then
-    log_info "Preparing to update /etc/fstab..."
+install_fstab() {
+    log_section "Configuring fstab"
     
     if [ ! -f /etc/fstab ]; then
         log_error "/etc/fstab does not exist"
-    else
-        sudo cp /etc/fstab /etc/fstab.backup
-        log_success "Backup created: /etc/fstab.backup"
-        
-        NEW_LINES=(
-            "UUID=dda9fe61-a2b0-4d5c-9076-8fa3cff067b4  /home/niel/DATA          ext4  defaults,noatime,nofail  0  2"
-            "UUID=e3af8571-cddf-4edc-86f2-5efa6d7fec2e  /run/media/niel/storage  ext4  defaults,noatime,nofail  0  2"
-            "UUID=b053948d-acab-49d1-bf0e-79986ab1c3f5  /home/niel/Downloads     ext4  defaults,noatime,nofail  0  2"
-        )
-        
-        TEMP_FSTAB="$TEMP_DIR/fstab.new"
-        
-        sudo grep -v -E "dda9fe61-a2b0-4d5c-9076-8fa3cff067b4|e3af8571-cddf-4edc-86f2-5efa6d7fec2e|b053948d-acab-49d1-bf0e-79986ab1c3f5" /etc/fstab > "$TEMP_FSTAB" 2>/dev/null || true
-        
-        echo "" >> "$TEMP_FSTAB"
-        echo "# storage drives (added by installer)" >> "$TEMP_FSTAB"
-        for line in "${NEW_LINES[@]}"; do
-            echo "$line" >> "$TEMP_FSTAB"
-        done
-        
-        sudo mv "$TEMP_FSTAB" /etc/fstab
-        log_success "/etc/fstab updated with new entries"
-        
-        log_info "Testing new fstab with 'sudo mount -a'..."
-        if sudo mount -a 2>&1 | tee -a "$LOG_FILE"; then
-            log_success "mount -a succeeded - fstab is valid"
-        else
-            log_error "mount -a failed. Please check your fstab entries."
-            log_warning "Restore backup: sudo cp /etc/fstab.backup /etc/fstab"
-            read -p "Press Enter to continue anyway, or Ctrl+C to abort."
-        fi
-        
-        log_info "Ensuring mount points exist..."
-        sudo mkdir -p /home/niel/DATA /run/media/niel/storage /home/niel/Downloads
-        log_success "Mount points created/verified"
-        
-        log_info "To set ownership: sudo chown -R niel:niel /home/niel/DATA /run/media/niel/storage /home/niel/Downloads"
-        log_success "Fstab configuration completed"
+        return
     fi
-else
-    log_info "Skipping fstab configuration"
+    
+    whiptail --title "Fstab Configuration" --yesno "This will add storage drive entries to /etc/fstab with nofail and noatime.\n\nUUID=dda9fe61...  /home/niel/DATA\nUUID=e3af8571...  /run/media/niel/storage\nUUID=b053948d...  /home/niel/Downloads\n\nProceed?" 15 70 || return
+    
+    sudo cp /etc/fstab /etc/fstab.backup
+    log_success "Backup created: /etc/fstab.backup"
+    
+    NEW_LINES=(
+        "UUID=dda9fe61-a2b0-4d5c-9076-8fa3cff067b4  /home/niel/DATA          ext4  defaults,noatime,nofail  0  2"
+        "UUID=e3af8571-cddf-4edc-86f2-5efa6d7fec2e  /run/media/niel/storage  ext4  defaults,noatime,nofail  0  2"
+        "UUID=b053948d-acab-49d1-bf0e-79986ab1c3f5  /home/niel/Downloads     ext4  defaults,noatime,nofail  0  2"
+    )
+    
+    TEMP_FSTAB="$TEMP_DIR/fstab.new"
+    sudo grep -v -E "dda9fe61-a2b0-4d5c-9076-8fa3cff067b4|e3af8571-cddf-4edc-86f2-5efa6d7fec2e|b053948d-acab-49d1-bf0e-79986ab1c3f5" /etc/fstab > "$TEMP_FSTAB" 2>/dev/null || true
+    
+    echo "" >> "$TEMP_FSTAB"
+    echo "# storage drives (added by installer)" >> "$TEMP_FSTAB"
+    for line in "${NEW_LINES[@]}"; do
+        echo "$line" >> "$TEMP_FSTAB"
+    done
+    
+    sudo mv "$TEMP_FSTAB" /etc/fstab
+    log_success "/etc/fstab updated"
+    
+    if sudo mount -a 2>&1 | tee -a "$LOG_FILE"; then
+        log_success "mount -a succeeded"
+    else
+        log_error "mount -a failed. Restore backup: sudo cp /etc/fstab.backup /etc/fstab"
+    fi
+    
+    sudo mkdir -p /home/niel/DATA /run/media/niel/storage /home/niel/Downloads
+    log_success "Mount points created"
+}
+
+# ─── Main Script ────────────────────────────────────────────────────
+
+show_menu
+
+# Show clock menu if selected
+if [[ "$INSTALL_CLOCK" == "on" ]]; then
+    show_clock_menu
 fi
 
-# ─── Step 10: Finalize Setup ─────────────────────────────────────────
+# Show Spicetify options if selected
+if [[ "$INSTALL_SPICETIFY" == "on" ]]; then
+    show_spicetify_options
+fi
 
-log_section "Step 10: Finalizing setup"
+# Show summary
+whiptail --title "Installation Summary" --yesno "Ready to install:\n\n  Caelestia KDE: ${INSTALL_CAELESTIA}\n  Custom configs: ${INSTALL_CONFIGS}\n  Kitty terminal: ${INSTALL_KITTY}\n  Icons: ${INSTALL_ICONS}\n  Wallpapers: ${INSTALL_WALLPAPERS}\n  Clock: ${INSTALL_CLOCK}\n  Apps: ${INSTALL_APPS}\n  Niri Anim Switcher: ${INSTALL_NIRI}\n  Spotify+Spicetify: ${INSTALL_SPICETIFY}\n  Fstab: ${INSTALL_FSTAB}\n\nProceed with installation?" 18 70 || exit
 
+# Run installations
+if [[ "$INSTALL_CAELESTIA" == "on" ]]; then install_caelestia; fi
+if [[ "$INSTALL_CONFIGS" == "on" ]]; then install_configs; fi
+if [[ "$INSTALL_KITTY" == "on" ]]; then install_kitty; fi
+if [[ "$INSTALL_ICONS" == "on" ]]; then install_icons; fi
+if [[ "$INSTALL_WALLPAPERS" == "on" ]]; then install_wallpapers; fi
+if [[ "$INSTALL_CLOCK" == "on" ]]; then install_clock; fi
+if [[ "$INSTALL_APPS" == "on" ]]; then install_apps; fi
+if [[ "$INSTALL_NIRI" == "on" ]]; then install_niri; fi
+if [[ "$INSTALL_SPICETIFY" == "on" ]]; then install_spicetify; fi
+if [[ "$INSTALL_FSTAB" == "on" ]]; then install_fstab; fi
+
+# Finalize
 mkdir -p "$HOME/.local/bin"
-mkdir -p "$HOME/.config/autostart"
 
 if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
-    log_success "Added ~/.local/bin to PATH"
 fi
 
-if command -v systemctl &> /dev/null; then
-    if systemctl --user is-active --quiet keyd 2>/dev/null; then
-        log_success "keyd service is running"
-    else
-        log_warning "keyd service not running. If shortcuts don't work: systemctl --user restart keyd"
-    fi
-fi
+# ─── Completion ─────────────────────────────────────────────────────
 
-# ─── Step 11: Post-installation Guide ──────────────────────────────
+whiptail --title "Installation Complete" --msgbox "✦ Installation Complete! ✦\n\nComponents installed:\n  Caelestia: ${INSTALL_CAELESTIA}\n  Configs: ${INSTALL_CONFIGS}\n  Kitty: ${INSTALL_KITTY}\n  Icons: ${INSTALL_ICONS}\n  Wallpapers: ${INSTALL_WALLPAPERS}\n  Clock: ${INSTALL_CLOCK}\n  Apps: ${INSTALL_APPS}\n  Niri: ${INSTALL_NIRI}\n  Spotify: ${INSTALL_SPICETIFY}\n  Fstab: ${INSTALL_FSTAB}\n\nLog saved to: $LOG_FILE\n\nMay your desktop always reflect the stars! ✧" 20 70
 
-echo ""
-log_success "╔════════════════════════════════════════════════════════════╗"
-log_success "║              ✦ I N S T A L L A T I O N   D O N E ✦        ║"
-log_success "╚════════════════════════════════════════════════════════════╝"
-echo ""
-log_info "┌─ Post-installation steps ──────────────────────────────────┐"
-log_info "│"
-log_info "│  1. Log out and log back in to see all changes"
-log_info "│  2. If widgets don't appear: caelestia shell -d"
-log_info "│  3. For wallpapers: Super+Space → '>' → Caelestia Tweaks"
-log_info "│  4. Color scheme: System Settings → Colors → Material You"
-log_info "│"
-log_info "└────────────────────────────────────────────────────────────┘"
-echo ""
-log_info "┌─ Key Bindings ─────────────────────────────────────────────┐"
-log_info "│  Super + /     │ Show keybind cheatsheet"
-log_info "│  Super + Enter │ Open terminal"
-log_info "│  Super + Space │ Application launcher"
-log_info "│  Super + B     │ Toggle notification panel"
-log_info "│  Super + V     │ Open Clipboard History"
-log_info "└────────────────────────────────────────────────────────────┘"
-echo ""
-log_info "┌─ Installed Components ─────────────────────────────────────┐"
-log_info "│  ✓ Caelestia KDE theme"
-log_info "│  ✓ Fastfetch, Fish, Kitty configs"
-if [[ $install_kitty == "y" || $install_kitty == "Y" ]]; then
-    log_info "│  ✓ Kitty terminal"
-else
-    log_info "│  ${YELLOW}No Kitty installation${NC}"
-fi
-if [[ $install_icons == "y" || $install_icons == "Y" ]]; then
-    log_info "│  ✓ Neo-Candy-Papirus-Carmine icons"
-else
-    log_info "│  ${YELLOW}No icon theme installed${NC}"
-fi
-log_info "│  ✓ Wallpaper-cache"
-if [[ $install_clock == "y" || $install_clock == "Y" ]] && [[ $clock_choice == "1" || $clock_choice == "2" ]]; then
-    log_info "│  ✓ Modern Clock widget"
-else
-    log_info "│  ${YELLOW}No clock widget installed${NC}"
-fi
-if [[ $install_apps == "y" || $install_apps == "Y" ]]; then
-    log_info "│  ✓ Viber, Signal, Zoom, Thunar"
-else
-    log_info "│  ${YELLOW}No additional applications installed${NC}"
-fi
-if [[ $install_spotify_spicetify == "y" || $install_spotify_spicetify == "Y" ]]; then
-    log_info "│  ✓ Spotify + Spicetify"
-else
-    log_info "│  ${YELLOW}No Spotify/Spicetify installation${NC}"
-fi
-if [[ $run_fstab == "y" || $run_fstab == "Y" ]]; then
-    log_info "│  ✓ Fstab updated for storage drives"
-else
-    log_info "│  ${YELLOW}No fstab changes${NC}"
-fi
-log_info "└────────────────────────────────────────────────────────────┘"
-echo ""
-log_info "┌─ Uninstall ────────────────────────────────────────────────┐"
-log_info "│  cd ~/caelestia-dots-kde && bash ./uninstall.sh"
-log_info "│  rm -rf ~/wallpaper-cache"
-log_info "│  sudo cp /etc/fstab.backup /etc/fstab  (if needed)"
-log_info "└────────────────────────────────────────────────────────────┘"
-echo ""
-log_success "✧ May your desktop always reflect the stars! ✧"
-log_success "Installation log saved to: $LOG_FILE"
-
+log_success "Installation completed"
 exit 0
