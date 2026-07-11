@@ -1,6 +1,6 @@
 #!/bin/bash
 # ✦ C A E L E S T I A   K D E   -   O P T I O N A L   I N S T A L L E R ✦
-# Fully modular TUI installer with automatic backups
+# Fully modular TUI installer with automatic backups and icon theme setting
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -64,12 +64,10 @@ init_backup_system() {
     mkdir -p "$BACKUP_ROOT"
     touch "$BACKUP_METADATA"
     
-    # Create a new backup session with timestamp
     local timestamp=$(date +%Y%m%d_%H%M%S)
     CURRENT_BACKUP_DIR="$BACKUP_ROOT/backup_$timestamp"
     mkdir -p "$CURRENT_BACKUP_DIR"
     
-    # Log the start of this backup session
     echo "========================================" >> "$BACKUP_METADATA"
     echo "BACKUP SESSION: $timestamp" >> "$BACKUP_METADATA"
     echo "Started: $(date)" >> "$BACKUP_METADATA"
@@ -82,22 +80,15 @@ backup_file_or_dir() {
     local source="$1"
     local description="$2"
     
-    # Skip if dry run
     [[ "$DRY_RUN" == "true" ]] && return 0
+    [[ ! -e "$source" ]] && return 0
     
-    # Skip if source doesn't exist
-    if [[ ! -e "$source" ]]; then
-        return 0
-    fi
-    
-    # Create backup directory structure
     local backup_path="$CURRENT_BACKUP_DIR$(dirname "$source")"
     mkdir -p "$backup_path"
     
     local backup_name="$(basename "$source")"
     local backup_target="$backup_path/$backup_name"
     
-    # Copy the file/directory to backup
     if [[ -d "$source" ]]; then
         cp -r "$source" "$backup_target" 2>/dev/null || {
             warn "Failed to backup directory: $source"
@@ -110,7 +101,6 @@ backup_file_or_dir() {
         }
     fi
     
-    # Log the backup
     echo "$source → $backup_target ($description)" >> "$BACKUP_METADATA"
     ((BACKUP_COUNT++))
     
@@ -121,7 +111,6 @@ backup_file_or_dir() {
 restore_backup() {
     section "Restore from Backup"
     
-    # List available backups
     local backups=()
     for dir in "$BACKUP_ROOT"/backup_*; do
         if [[ -d "$dir" ]]; then
@@ -136,7 +125,6 @@ restore_backup() {
         return 0
     fi
     
-    # Let user select which backup to restore
     local selected_backup=$(whiptail --title "Select Backup to Restore" \
         --radiolist "Choose a backup to restore:" 20 80 10 \
         "${backups[@]}" \
@@ -146,7 +134,6 @@ restore_backup() {
         return 0
     fi
     
-    # Show what's in the backup
     local files_to_restore=()
     while IFS= read -r line; do
         if [[ "$line" =~ ^/ ]]; then
@@ -155,7 +142,6 @@ restore_backup() {
         fi
     done < <(grep "^/" "$BACKUP_METADATA" | grep -A 100 "BACKUP SESSION: $(basename "$selected_backup" | sed 's/backup_//')")
     
-    # Confirm restore
     local summary="This will restore the following files/directories:\n\n"
     for file in "${files_to_restore[@]}"; do
         summary+="  • $file\n"
@@ -166,7 +152,6 @@ restore_backup() {
         return 0
     fi
     
-    # Perform restore
     local restored_count=0
     while IFS= read -r line; do
         if [[ "$line" =~ ^/ ]]; then
@@ -174,14 +159,12 @@ restore_backup() {
             local backup_path="$selected_backup$original"
             
             if [[ -e "$backup_path" ]]; then
-                # Backup current version first (just in case)
                 local temp_backup="$CURRENT_BACKUP_DIR/restore_pre_backup$(dirname "$original")"
                 mkdir -p "$temp_backup"
                 if [[ -e "$original" ]]; then
                     cp -r "$original" "$temp_backup/" 2>/dev/null || true
                 fi
                 
-                # Restore from backup
                 rm -rf "$original" 2>/dev/null || true
                 if [[ -d "$backup_path" ]]; then
                     cp -r "$backup_path" "$(dirname "$original")/"
@@ -289,6 +272,89 @@ safe_install() {
     return 0
 }
 
+# ─── Icon Theme Setting Functions ──────────────────────────────────
+
+set_icon_theme() {
+    local icon_name="$1"
+    
+    section "Setting icon theme to: $icon_name"
+    
+    # Detect KDE version and use appropriate command
+    local kwrite_cmd=""
+    if command -v kwriteconfig6 &> /dev/null; then
+        kwrite_cmd="kwriteconfig6"
+    elif command -v kwriteconfig5 &> /dev/null; then
+        kwrite_cmd="kwriteconfig5"
+    else
+        warn "kwriteconfig not found - cannot set icon theme automatically"
+        return 1
+    fi
+    
+    # Backup existing kdeglobals
+    local kdeglobals="$HOME/.config/kdeglobals"
+    [[ -f "$kdeglobals" ]] && backup_file_or_dir "$kdeglobals" "kdeglobals (icon theme)"
+    
+    # Set the icon theme
+    info "Setting icon theme using $kwrite_cmd..."
+    $kwrite_cmd --file kdeglobals --group Icons --key Theme "$icon_name" 2>&1 | tee -a "$LOG_FILE"
+    
+    # Also set for GTK applications
+    if command -v gsettings &> /dev/null; then
+        info "Setting icon theme for GTK applications..."
+        gsettings set org.gnome.desktop.interface icon-theme "$icon_name" 2>&1 | tee -a "$LOG_FILE" || true
+    fi
+    
+    # Create/update GTK settings
+    local gtk_settings="$HOME/.config/gtk-3.0/settings.ini"
+    if [[ -f "$gtk_settings" ]]; then
+        backup_file_or_dir "$gtk_settings" "GTK3 settings"
+    fi
+    mkdir -p "$(dirname "$gtk_settings")"
+    
+    # Update GTK settings file
+    if ! grep -q "^gtk-icon-theme-name" "$gtk_settings" 2>/dev/null; then
+        echo "gtk-icon-theme-name=$icon_name" >> "$gtk_settings"
+    else
+        sed -i "s/^gtk-icon-theme-name=.*/gtk-icon-theme-name=$icon_name/" "$gtk_settings"
+    fi
+    
+    # Also for GTK4
+    local gtk4_settings="$HOME/.config/gtk-4.0/settings.ini"
+    if [[ -f "$gtk4_settings" ]]; then
+        backup_file_or_dir "$gtk4_settings" "GTK4 settings"
+    fi
+    mkdir -p "$(dirname "$gtk4_settings")"
+    if ! grep -q "^gtk-icon-theme-name" "$gtk4_settings" 2>/dev/null; then
+        echo "gtk-icon-theme-name=$icon_name" >> "$gtk4_settings"
+    else
+        sed -i "s/^gtk-icon-theme-name=.*/gtk-icon-theme-name=$icon_name/" "$gtk4_settings"
+    fi
+    
+    success "Icon theme set to: $icon_name"
+    
+    # Ask to restart KDE
+    if whiptail --title "Apply Changes" --yesno "Icon theme has been set.\n\nRestart Plasma Shell to apply changes immediately?" 10 60; then
+        info "Restarting Plasma Shell..."
+        if command -v kquitapp6 &> /dev/null; then
+            kquitapp6 plasmashell 2>/dev/null || true
+            sleep 2
+            kstart6 plasmashell 2>/dev/null || true
+        elif command -v kquitapp5 &> /dev/null; then
+            kquitapp5 plasmashell 2>/dev/null || true
+            sleep 2
+            kstart5 plasmashell 2>/dev/null || true
+        else
+            warn "Cannot restart Plasma Shell automatically"
+            warn "Please restart KDE manually or run:"
+            warn "  plasmashell --replace &"
+        fi
+        success "Plasma Shell restarted"
+    else
+        info "Changes will apply after next login or Plasma restart"
+        info "You can restart Plasma manually with: plasmashell --replace &"
+    fi
+}
+
 # ─── Create variety.conf content ──────────────────────────────────
 
 create_variety_conf() {
@@ -337,13 +403,12 @@ show_main_menu() {
     local title="✧ Caelestia KDE Installer ✧"
     local msg="Select components to install (Space to toggle, Enter to confirm)"
     
-    # ── Main checklist ──
     local options=(
         "caelestia" "Caelestia KDE theme (full KDE setup)" "ON"
         "configs" "Custom configs (fastfetch, fish, kitty)" "ON"
         "variety" "Variety wallpaper config (force install)" "ON"
         "kitty" "Kitty terminal emulator" "OFF"
-        "icons" "Neo-Candy-Papirus-Carmine icons" "OFF"
+        "icons" "Neo-Candy-Papirus-Carmine icons + SET THEME" "OFF"
         "wallpapers" "Wallpaper-cache (wallpaper collection)" "ON"
         "clock" "Modern Clock widget (choose variant later)" "OFF"
         "apps" "Applications (Viber, Signal, Zoom, Thunar, Chrome)" "OFF"
@@ -359,7 +424,6 @@ show_main_menu() {
         exit 0
     }
     
-    # ── Parse selections ──
     INSTALL_CAELESTIA="false"; INSTALL_CONFIGS="false"; INSTALL_VARIETY="false"
     INSTALL_KITTY="false"; INSTALL_ICONS="false"; INSTALL_WALLPAPERS="false"
     INSTALL_CLOCK="false"; INSTALL_APPS="false"; INSTALL_NIRI="false"
@@ -422,7 +486,6 @@ install_caelestia() {
     
     local caelestia_dir="$HOME/caelestia-dots-kde"
     
-    # Backup existing if present
     [[ -d "$caelestia_dir" ]] && backup_file_or_dir "$caelestia_dir" "Caelestia KDE directory"
     
     if [[ -d "$caelestia_dir" ]]; then
@@ -470,7 +533,6 @@ install_configs() {
         local dest="$config_dir/$conf"
         
         if [[ -d "$src" ]]; then
-            # Backup existing config
             [[ -d "$dest" ]] && backup_file_or_dir "$dest" "$conf config"
             
             info "Copying $conf config..."
@@ -489,29 +551,21 @@ install_variety_config() {
     local variety_dir="$HOME/.config/variety"
     local variety_conf="$variety_dir/variety.conf"
     
-    # Backup existing config if present
     [[ -f "$variety_conf" ]] && backup_file_or_dir "$variety_conf" "Variety config"
     
-    # Create directory if it doesn't exist
     mkdir -p "$variety_dir"
-    
-    # Create the config file
     create_variety_conf
     
-    # FORCE copy - overwrite without asking
     info "Force copying variety.conf to $variety_conf"
     cp -f "$TEMP_DIR/variety.conf" "$variety_conf"
     
-    # Verify it was copied
     if [[ -f "$variety_conf" ]]; then
         success "Variety config force-installed to $variety_conf"
-        success "  ✓ File overwritten (backup created)"
     else
         warn "Failed to copy variety.conf"
         return 1
     fi
     
-    # Optional: Restart Variety if running
     if pgrep -x "variety" > /dev/null; then
         if whiptail --title "Variety" --yesno "Variety is currently running. Restart it to apply new config?" 8 60; then
             info "Restarting Variety..."
@@ -538,6 +592,7 @@ install_icons() {
     # Backup existing icons
     [[ -d "$icon_target" ]] && backup_file_or_dir "$icon_target" "Icon theme"
     
+    # Install icons
     if [[ -n "$AUR_HELPER" ]]; then
         info "Installing from AUR using $AUR_HELPER..."
         $AUR_CMD "${icon_name}-git" 2>&1 | tee -a "$LOG_FILE" || {
@@ -548,10 +603,21 @@ install_icons() {
         install_icons_manually
     fi
     
-    # Set as default icon theme
-    if command -v kwriteconfig6 &> /dev/null; then
-        kwriteconfig6 --file kdeglobals --group Icons --key Theme "${icon_name}" 2>&1 | tee -a "$LOG_FILE"
-        success "Icon theme set as default"
+    # Verify installation
+    if [[ -d "$icon_target" ]] || [[ -d "/usr/share/icons/$icon_name" ]] || [[ -d "$HOME/.icons/$icon_name" ]]; then
+        success "Icon theme installed successfully"
+        
+        # ─── SET THE ICON THEME ────────────────────────────────
+        if whiptail --title "Set Icon Theme" --yesno "Neo-Candy-Papirus-Carmine icons installed.\n\nSet it as the default icon theme now?" 10 60; then
+            set_icon_theme "$icon_name"
+        else
+            info "Icon theme installed but not set as default"
+            info "You can set it later with:"
+            info "  kwriteconfig6 --file kdeglobals --group Icons --key Theme $icon_name"
+            info "  gsettings set org.gnome.desktop.interface icon-theme $icon_name"
+        fi
+    else
+        warn "Icon theme installation may have failed"
     fi
 }
 
@@ -580,7 +646,6 @@ install_wallpapers() {
     
     local wallpaper_dir="$HOME/wallpaper-cache"
     
-    # Backup existing wallpapers
     [[ -d "$wallpaper_dir" ]] && backup_file_or_dir "$wallpaper_dir" "Wallpaper cache"
     
     if [[ -d "$wallpaper_dir" ]]; then
@@ -646,7 +711,6 @@ install_clock() {
     
     mkdir -p "$HOME/.local/share/plasma/plasmoids"
     
-    # Try different install methods
     if [[ -d "$clock_dir/package" ]]; then
         mkdir -p "$HOME/.local/share/plasma/plasmoids/$plasmoid_id"
         cp -r "$clock_dir/package/." "$HOME/.local/share/plasma/plasmoids/$plasmoid_id/"
@@ -659,7 +723,6 @@ install_clock() {
         return 1
     fi
     
-    # Restart Plasma to show new widget
     kquitapp6 plasmashell 2>/dev/null || true
     sleep 2
     kstart6 plasmashell 2>/dev/null || true
@@ -688,12 +751,10 @@ install_apps() {
         dnf)
             safe_install "thunar" && safe_install "thunar-volman"
             
-            # Google Chrome
             sudo dnf install -y fedora-workstation-repositories 2>&1 | tee -a "$LOG_FILE" || true
             sudo dnf config-manager --set-enabled google-chrome 2>&1 | tee -a "$LOG_FILE" || true
             safe_install "google-chrome-stable" true
             
-            # Flatpak apps
             if command -v flatpak &> /dev/null; then
                 info "Installing Flatpak applications..."
                 flatpak install -y flathub com.viber.Viber 2>&1 | tee -a "$LOG_FILE" || true
@@ -705,24 +766,20 @@ install_apps() {
             safe_install "thunar" && safe_install "thunar-volman"
             safe_install "thunar-shares-plugin" true
             
-            # Google Chrome
             wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add - 2>&1 | tee -a "$LOG_FILE" || true
             echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list 2>&1 | tee -a "$LOG_FILE" || true
             sudo apt update 2>&1 | tee -a "$LOG_FILE" || true
             safe_install "google-chrome-stable" true
             
-            # Signal
             wget -qO- https://updates.signal.org/desktop/apt/keys.asc | gpg --dearmor > "$TEMP_DIR/signal.gpg" 2>/dev/null || true
             sudo mv "$TEMP_DIR/signal.gpg" /usr/share/keyrings/ 2>/dev/null || true
             echo "deb [arch=amd64 signed-by=/usr/share/keyrings/signal.gpg] https://updates.signal.org/desktop/apt xenial main" | sudo tee /etc/apt/sources.list.d/signal-xenial.list 2>/dev/null || true
             sudo apt update 2>&1 | tee -a "$LOG_FILE" || true
             safe_install "signal-desktop" true
             
-            # Viber
             wget -O "$TEMP_DIR/viber.deb" https://download.cdn.viber.com/desktop/Linux/viber.deb 2>&1 | tee -a "$LOG_FILE" || true
             sudo dpkg -i "$TEMP_DIR/viber.deb" 2>&1 | tee -a "$LOG_FILE" || sudo apt install -f -y 2>&1 | tee -a "$LOG_FILE" || true
             
-            # Zoom
             wget -O "$TEMP_DIR/zoom.deb" https://zoom.us/client/latest/zoom_amd64.deb 2>&1 | tee -a "$LOG_FILE" || true
             sudo dpkg -i "$TEMP_DIR/zoom.deb" 2>&1 | tee -a "$LOG_FILE" || sudo apt install -f -y 2>&1 | tee -a "$LOG_FILE" || true
             ;;
@@ -738,7 +795,6 @@ install_apps() {
 install_niri() {
     section "Installing Niri Animation Switcher"
     
-    # Check for Niri
     if ! command -v niri &> /dev/null; then
         warn "Niri compositor not detected. The tool will be installed but may not work."
         if ! whiptail --title "Warning" --yesno "Niri compositor not found. Continue anyway?" 8 60; then
@@ -746,7 +802,6 @@ install_niri() {
         fi
     fi
     
-    # Install dependencies
     case $PKG_MANAGER in
         pacman)
             safe_install "python" && safe_install "python-gobject"
@@ -768,7 +823,6 @@ install_niri() {
     
     local niri_dir="$HOME/niri-anim-switcher"
     
-    # Backup existing
     [[ -d "$niri_dir" ]] && backup_file_or_dir "$niri_dir" "Niri anim switcher"
     
     if [[ -d "$niri_dir" ]]; then
@@ -799,7 +853,6 @@ install_niri() {
 install_spicetify() {
     section "Installing Spotify + Spicetify"
     
-    # ── Check if Spotify is installed ──
     local spotify_installed="false"
     local spotify_type=""
     
@@ -814,7 +867,6 @@ install_spicetify() {
         spotify_type="arch-launcher"
     fi
     
-    # ── Install Spotify if not installed ──
     if [[ "$spotify_installed" == "false" ]]; then
         info "Installing Spotify..."
         case $PKG_MANAGER in
@@ -852,7 +904,6 @@ install_spicetify() {
         return 1
     }
     
-    # ── Launch Spotify if requested ──
     if [[ "$SPOTIFY_ACTION" == "wait" || "$SPOTIFY_ACTION" == "background" ]]; then
         info "Launching Spotify..."
         spotify &
@@ -865,20 +916,16 @@ install_spicetify() {
         fi
     fi
     
-    # ── Install Spicetify ──
     info "Installing Spicetify..."
     
-    # Install dependencies
     case $PKG_MANAGER in
         pacman|dnf|apt)
             safe_install "curl" && safe_install "unzip"
             ;;
     esac
     
-    # Backup spicetify config if exists
     [[ -d "$HOME/.spicetify" ]] && backup_file_or_dir "$HOME/.spicetify" "Spicetify config"
     
-    # Download and run Spicetify installer
     curl -fsSL https://raw.githubusercontent.com/spicetify/cli/main/install.sh -o "$TEMP_DIR/install_spicetify.sh"
     chmod +x "$TEMP_DIR/install_spicetify.sh"
     bash "$TEMP_DIR/install_spicetify.sh" 2>&1 | tee -a "$LOG_FILE" || {
@@ -886,7 +933,6 @@ install_spicetify() {
         return 1
     }
     
-    # Add to PATH if needed
     if ! command -v spicetify &> /dev/null && [[ -f "$HOME/.spicetify/spicetify" ]]; then
         export PATH="$HOME/.spicetify:$PATH"
         local bashrc="$HOME/.bashrc"
@@ -897,7 +943,6 @@ install_spicetify() {
         echo 'export PATH="$HOME/.spicetify:$PATH"' >> "$zshrc" 2>/dev/null || true
     fi
     
-    # Apply Spicetify
     if command -v spicetify &> /dev/null; then
         spicetify backup apply 2>&1 | tee -a "$LOG_FILE" || true
         success "Spicetify installed and applied"
@@ -919,36 +964,29 @@ install_fstab() {
         return 1
     fi
     
-    # Backup fstab
     local fstab_backup="/etc/fstab.backup.$(date +%Y%m%d_%H%M%S)"
     sudo cp /etc/fstab "$fstab_backup"
     success "Backup created: $fstab_backup"
     log "Fstab backup: $fstab_backup"
     
-    # Read existing entries and remove duplicates
     local temp_fstab="$TEMP_DIR/fstab.new"
     local uuids=()
     
-    # Extract UUIDs from new entries
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         local uuid=$(echo "$line" | awk '{print $1}')
         [[ -n "$uuid" ]] && uuids+=("$uuid")
     done <<< "$FSTAB_ENTRIES"
     
-    # Remove existing entries with these UUIDs
     sudo grep -v -F -f <(printf "%s\n" "${uuids[@]}") /etc/fstab > "$temp_fstab" 2>/dev/null || true
     
-    # Add new entries
     echo "" >> "$temp_fstab"
     echo "# Storage drives (added by Caelestia installer on $(date))" >> "$temp_fstab"
     echo "$FSTAB_ENTRIES" >> "$temp_fstab"
     
-    # Apply new fstab
     sudo mv "$temp_fstab" /etc/fstab
     success "/etc/fstab updated"
     
-    # Create mount points
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         local mount_point=$(echo "$line" | awk '{print $2}')
@@ -958,7 +996,6 @@ install_fstab() {
         fi
     done <<< "$FSTAB_ENTRIES"
     
-    # Test mount
     if sudo mount -a 2>&1 | tee -a "$LOG_FILE"; then
         success "All drives mounted successfully"
     else
@@ -975,7 +1012,7 @@ show_summary() {
     summary+="  Custom configs:     $INSTALL_CONFIGS\n"
     summary+="  Variety config:     $INSTALL_VARIETY (FORCE MODE)\n"
     summary+="  Kitty terminal:     $INSTALL_KITTY\n"
-    summary+="  Icons:              $INSTALL_ICONS\n"
+    summary+="  Icons:              $INSTALL_ICONS + SET THEME\n"
     summary+="  Wallpapers:         $INSTALL_WALLPAPERS\n"
     summary+="  Clock:              $INSTALL_CLOCK (${CLOCK_CHOICE:-none})\n"
     summary+="  Apps:               $INSTALL_APPS\n"
@@ -995,7 +1032,6 @@ show_summary() {
 # ─── Main Script ─────────────────────────────────────────────────────
 
 main() {
-    # Parse command-line options
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run) DRY_RUN=true; shift ;;
@@ -1032,16 +1068,11 @@ EOF
         esac
     done
     
-    # Initialize backup system
     init_backup_system
-    
-    # ── Show main menu ──
     show_main_menu
     
-    # ── Handle restore first (if selected) ──
     if [[ "$RESTORE_BACKUP" == "true" ]]; then
         restore_backup
-        # Exit after restore unless other components selected
         if [[ "$INSTALL_CAELESTIA" == "false" && "$INSTALL_CONFIGS" == "false" && \
               "$INSTALL_VARIETY" == "false" && "$INSTALL_KITTY" == "false" && \
               "$INSTALL_ICONS" == "false" && "$INSTALL_WALLPAPERS" == "false" && \
@@ -1052,15 +1083,12 @@ EOF
         fi
     fi
     
-    # ── Show sub-menus for selected components ──
     [[ "$INSTALL_CLOCK" == "true" ]] && show_clock_menu
     [[ "$INSTALL_SPICETIFY" == "true" ]] && show_spicetify_menu
     [[ "$INSTALL_FSTAB" == "true" ]] && show_fstab_menu
     
-    # ── Show summary and confirm ──
     show_summary
     
-    # ── Dry run mode ──
     if [[ "$DRY_RUN" == "true" ]]; then
         info "DRY RUN MODE - No changes will be made"
         info "Would install:"
@@ -1068,7 +1096,7 @@ EOF
         [[ "$INSTALL_CONFIGS" == "true" ]] && echo "  - Custom configs"
         [[ "$INSTALL_VARIETY" == "true" ]] && echo "  - Variety config (FORCE MODE)"
         [[ "$INSTALL_KITTY" == "true" ]] && echo "  - Kitty terminal"
-        [[ "$INSTALL_ICONS" == "true" ]] && echo "  - Icons"
+        [[ "$INSTALL_ICONS" == "true" ]] && echo "  - Icons + SET THEME"
         [[ "$INSTALL_WALLPAPERS" == "true" ]] && echo "  - Wallpapers"
         [[ "$INSTALL_CLOCK" == "true" ]] && echo "  - Clock widget ($CLOCK_CHOICE)"
         [[ "$INSTALL_APPS" == "true" ]] && echo "  - Applications"
@@ -1079,7 +1107,6 @@ EOF
         exit 0
     fi
     
-    # ── Run installations ──
     [[ "$INSTALL_CAELESTIA" == "true" ]] && install_caelestia
     [[ "$INSTALL_CONFIGS" == "true" ]] && install_configs
     [[ "$INSTALL_VARIETY" == "true" ]] && install_variety_config
@@ -1092,7 +1119,6 @@ EOF
     [[ "$INSTALL_SPICETIFY" == "true" ]] && install_spicetify
     [[ "$INSTALL_FSTAB" == "true" ]] && install_fstab
     
-    # ── Finalize ──
     mkdir -p "$HOME/.local/bin"
     if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
         local bashrc="$HOME/.bashrc"
@@ -1104,7 +1130,6 @@ EOF
         info "Added ~/.local/bin to PATH in .bashrc and .zshrc"
     fi
     
-    # ── Summary ──
     local summary="✦ Installation Complete! ✦\n\n"
     summary+="Components installed:\n"
     summary+="  Caelestia:      $INSTALL_CAELESTIA\n"
@@ -1126,7 +1151,6 @@ EOF
     
     whiptail --title "Installation Complete" --msgbox "$summary" 24 75
     
-    # ── Show backup location ──
     info "Backup saved to: $CURRENT_BACKUP_DIR"
     info "Use './$0 --restore' to revert to this state"
     
